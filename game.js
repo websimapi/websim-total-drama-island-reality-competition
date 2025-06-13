@@ -48,24 +48,25 @@ function TotalDramaGame() {
   const [currentUser, setCurrentUser] = useState(null);
   const [winners, setWinners] = useState([]);
   const [votedPlayer, setVotedPlayer] = useState(null);
+  const [isInitialized, setIsInitialized] = useState(false);
   
   const countdownRef = useRef(null);
   const hostRef = useRef(false);
 
   // Subscribe to room state and presence
   const roomState = React.useSyncExternalStore(
-    room.subscribeRoomState,
-    () => room.roomState
+    (callback) => isInitialized ? room.subscribeRoomState(callback) : () => {},
+    () => isInitialized ? room.roomState || {} : {}
   );
   
   const presence = React.useSyncExternalStore(
-    room.subscribePresence,
-    () => room.presence
+    (callback) => isInitialized ? room.subscribePresence(callback) : () => {},
+    () => isInitialized ? room.presence || {} : {}
   );
 
   const peers = React.useSyncExternalStore(
-    room.subscribePresence,
-    () => room.peers
+    (callback) => isInitialized ? room.subscribePresence(callback) : () => {},
+    () => isInitialized ? room.peers || {} : {}
   );
 
   // Subscribe to winner records
@@ -90,40 +91,46 @@ function TotalDramaGame() {
   }, [winnerRecords]);
 
   async function initializeGame() {
-    await room.initialize();
-    await db.initialize();
-    
-    const user = await window.websim.getCurrentUser();
-    setCurrentUser(user);
+    try {
+      await room.initialize();
+      await db.initialize();
+      
+      setIsInitialized(true);
+      
+      const user = await window.websim.getCurrentUser();
+      setCurrentUser(user);
 
-    // Determine if this client should be the host (first to join or designated)
-    const clients = Object.keys(room.peers);
-    if (clients.length === 0 || clients[0] === room.clientId) {
-      setIsHost(true);
-      hostRef.current = true;
-    }
+      // Determine if this client should be the host (first to join or designated)
+      const clients = Object.keys(room.peers || {});
+      if (clients.length === 0 || clients[0] === room.clientId) {
+        setIsHost(true);
+        hostRef.current = true;
+      }
 
-    // Set initial presence
-    room.updatePresence({
-      status: 'waiting',
-      alive: true,
-      immunity: false
-    });
+      // Set initial presence
+      room.updatePresence({
+        status: 'waiting',
+        alive: true,
+        immunity: false
+      });
 
-    // Listen for game events
-    room.onmessage = handleGameEvent;
+      // Listen for game events
+      room.onmessage = handleGameEvent;
 
-    // Sync game state
-    if (roomState.gameState) {
-      setGameState(roomState.gameState);
-      setCountdown(roomState.countdown || 20);
-      setCurrentChallenge(roomState.currentChallenge);
-      setHostMessage(roomState.hostMessage || '');
-    }
+      // Sync game state
+      if (room.roomState?.gameState) {
+        setGameState(room.roomState.gameState);
+        setCountdown(room.roomState.countdown || 20);
+        setCurrentChallenge(room.roomState.currentChallenge);
+        setHostMessage(room.roomState.hostMessage || '');
+      }
 
-    // Start host messages if we're the host
-    if (hostRef.current) {
-      updateHostMessage("Welcome to Total Drama Island! We need at least 3 contestants to start the madness!");
+      // Start host messages if we're the host
+      if (hostRef.current) {
+        updateHostMessage("Welcome to Total Drama Island! We need at least 3 contestants to start the madness!");
+      }
+    } catch (error) {
+      console.error('Failed to initialize game:', error);
     }
   }
 
@@ -133,7 +140,7 @@ function TotalDramaGame() {
     switch (type) {
       case 'connected':
         if (hostRef.current) {
-          const playerCount = Object.keys(room.peers).length;
+          const playerCount = Object.keys(room.peers || {}).length;
           if (playerCount >= 3 && gameState === GAME_STATES.LOBBY) {
             startCountdown();
           }
@@ -421,10 +428,26 @@ function TotalDramaGame() {
     updateHostMessage("New game starting! Let's see who has what it takes to survive!");
   }
 
-  const alivePlayers = Object.entries(presence).filter(([id, p]) => p?.alive);
-  const allPlayers = Object.entries(peers);
+  const alivePlayers = Object.entries(presence || {}).filter(([id, p]) => p?.alive);
+  const allPlayers = Object.entries(peers || {});
   const spectators = allPlayers.filter(([id]) => !presence[id]?.alive && gameState !== GAME_STATES.LOBBY);
   const isSpectator = !presence[room.clientId]?.alive && gameState !== GAME_STATES.LOBBY;
+
+  if (!isInitialized) {
+    return (
+      <div className="game-container">
+        <header className="header">
+          <h1 className="title">TOTAL DRAMA ISLAND</h1>
+          <p className="subtitle">The Ultimate Reality TV Competition!</p>
+        </header>
+        <div className="lobby">
+          <div className="lobby-card">
+            <div className="loading">Loading...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="game-container">
@@ -596,4 +619,3 @@ function TotalDramaGame() {
 }
 
 ReactDOM.render(<TotalDramaGame />, document.getElementById('root'));
-
